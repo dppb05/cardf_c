@@ -5,8 +5,10 @@
 
 #include "util.h"
 #include "matrix.h"
+#include "stex.h"
 
 #define BUFF_SIZE 1024
+#define HEADER_SIZE 41
 
 size_t objc;
 size_t clustc;
@@ -278,6 +280,28 @@ double run() {
     return adeq;
 }
 
+st_matrix* agg_dmatrix(st_matrix *weights) {
+    st_matrix *ret = malloc(sizeof(st_matrix));
+    init_st_matrix(ret, objc, objc);
+    size_t h;
+    size_t i;
+    size_t j;
+    size_t k;
+    double val;
+    for(i = 0; i < objc; ++i) {
+        for(h = 0; h < objc; ++h) {
+            val = 0.0;
+            for(k = 0; k < clustc; ++k) {
+                for(j = 0; j < dmatrixc; ++j) {
+                    val += get(weights, k, j) * get(&dmatrix[j], i, h);
+                }
+            }
+            set(ret, i, h, val);
+        }
+    }
+    return ret;
+}
+
 int main(int argc, char **argv) {
     FILE *cfgfile = fopen(argv[1], "r");
     if(!cfgfile) {
@@ -289,13 +313,15 @@ int main(int argc, char **argv) {
         fclose(cfgfile);
         return 1;
     }
-    // ignore labels
-    fscanf(cfgfile, "%*d");
+    // reading labels
+    int classc;
+    int labels[objc];
+    fscanf(cfgfile, "%d", &classc);
     size_t i;
     for(i = 0; i < objc; ++i) {
-        fscanf(cfgfile, "%*d");
+        fscanf(cfgfile, "%d", &labels[i]);
     }
-    // ignore labels end
+    // reading labels end
     fscanf(cfgfile, "%d", &dmatrixc);
     if(dmatrixc <= 0) {
         printf("Error: dmatrixc <= 0.\n");
@@ -369,6 +395,16 @@ int main(int argc, char **argv) {
             goto END;
         }
     }
+    double avg_partcoef;
+    double avg_modpcoef;
+    double avg_partent;
+    silhouet *csil;
+    silhouet *fsil;
+    silhouet *avg_csil;
+    silhouet *avg_fsil;
+    int *pred;
+    st_matrix *groups;
+    st_matrix *agg_dmtx;
     qexpval = 1.0 / (qexp - 1.0);
     srand(time(NULL));
     size_t best_inst;
@@ -377,6 +413,33 @@ int main(int argc, char **argv) {
     for(i = 1; i <= insts; ++i) {
         printf("Instance %d:\n", i);
         cur_inst_adeq = run();
+        pred = defuz(&memb);
+        groups = asgroups(pred, objc, classc);
+        agg_dmtx = agg_dmatrix(&weights);
+        csil = crispsil(groups, agg_dmtx);
+        fsil = fuzzysil(csil, groups, &memb, 1.6);
+        if(i == 1) {
+            avg_partcoef = partcoef(&memb);
+            avg_modpcoef = modpcoef(&memb);
+            avg_partent = partent(&memb);
+            avg_csil = csil;
+            avg_fsil = fsil;
+        } else {
+            avg_partcoef = (avg_partcoef + partcoef(&memb)) / 2.0;
+            avg_modpcoef = (avg_modpcoef + modpcoef(&memb)) / 2.0;
+            avg_partent = (avg_partent + partent(&memb)) / 2.0;
+            avg_silhouet(avg_csil, csil);
+            avg_silhouet(avg_fsil, fsil);
+            free_silhouet(csil);
+            free(csil);
+            free_silhouet(fsil);
+            free(fsil);
+        }
+        free(pred);
+        free_st_matrix(groups);
+        free(groups);
+        free_st_matrix(agg_dmtx);
+        free(agg_dmtx);
         if(i == 1 || cur_inst_adeq < best_inst_adeq) {
             mtxcpy(&best_memb, &memb);
             mtxcpy(&best_weights, &weights);
@@ -390,6 +453,51 @@ int main(int argc, char **argv) {
     printf("\n");
     print_memb(&best_memb);
     print_weights(&best_weights);
+
+    pred = defuz(&best_memb);
+    groups = asgroups(pred, objc, classc);
+    print_header("Partitions", HEADER_SIZE);
+    print_groups(groups);
+
+    print_header("Average indexes", HEADER_SIZE);
+    printf("\nPartition coefficient: %.10lf\n", avg_partcoef);
+    printf("Modified partition coefficient: %.10lf\n", avg_modpcoef);
+    printf("Partition entropy: %.10lf (max: %.10lf)\n", avg_partent,
+            log(clustc));
+
+    print_header("Best instance indexes", HEADER_SIZE);
+    printf("\nPartition coefficient: %.10lf\n", partcoef(&best_memb));
+    printf("Modified partition coefficient: %.10lf\n",
+            modpcoef(&best_memb));
+    printf("Partition entropy: %.10lf (max: %.10lf)\n",
+            partent(&best_memb), log(clustc));
+
+    print_header("Averaged crisp silhouette", HEADER_SIZE);
+    print_silhouet(avg_csil);
+    print_header("Averaged fuzzy silhouette", HEADER_SIZE);
+    print_silhouet(avg_fsil);
+
+    agg_dmtx = agg_dmatrix(&best_weights);
+    csil = crispsil(groups, agg_dmtx);
+    print_header("Best instance crisp silhouette", HEADER_SIZE);
+    print_silhouet(csil);
+    fsil = fuzzysil(csil, groups, &best_memb, 1.6);
+    print_header("Best instance fuzzy silhouette", HEADER_SIZE);
+    print_silhouet(fsil);
+
+    free_silhouet(avg_csil);
+    free(avg_csil);
+    free_silhouet(avg_fsil);
+    free(avg_fsil);
+    free_silhouet(csil);
+    free(csil);
+    free_silhouet(fsil);
+    free(fsil);
+    free(pred);
+    free_st_matrix(groups);
+    free(groups);
+    free_st_matrix(agg_dmtx);
+    free(agg_dmtx);
 END:
     fclose(stdout);
     for(j = 0; j < dmatrixc; ++j) {
