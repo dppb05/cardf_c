@@ -191,7 +191,7 @@ void update_weights() {
     }
 }
 
-void run() {
+double run() {
     init_memb();
     print_memb(&memb);
     init_weights();
@@ -275,6 +275,7 @@ void run() {
         }
     } while (++iter <= max_iter && !mtxeq(&memb, &prev_memb));
     free_st_matrix(&prev_memb);
+    return adeq;
 }
 
 int main(int argc, char **argv) {
@@ -350,13 +351,17 @@ int main(int argc, char **argv) {
     printf("Paramter q: %lf\n", qexp);
     printf("Epsilon: %.15lf\n", epsilon);
     printf("############################\n");
+    st_matrix best_memb;
+    st_matrix best_weights;
     // memory allocation start
     dmatrix = malloc(sizeof(st_matrix) * dmatrixc);
     for(j = 0; j < dmatrixc; ++j) {
         init_st_matrix(&dmatrix[j], objc, objc);
     }
     init_st_matrix(&memb, objc, clustc);
+    init_st_matrix(&best_memb, objc, clustc);
     init_st_matrix(&weights, clustc, dmatrixc);
+    init_st_matrix(&best_weights, clustc, dmatrixc);
     // memory allocation end
     for(j = 0; j < dmatrixc; ++j) {
         if(!load_data(filenames[j], &dmatrix[j])) {
@@ -364,15 +369,27 @@ int main(int argc, char **argv) {
             goto END;
         }
     }
+    qexpval = 1.0 / (qexp - 1.0);
+    srand(time(NULL));
     size_t best_inst;
     double best_inst_adeq;
     double cur_inst_adeq;
-    qexpval = 1.0 / (qexp - 1.0);
-    srand(time(NULL));
     for(i = 1; i <= insts; ++i) {
         printf("Instance %d:\n", i);
-        run();
+        cur_inst_adeq = run();
+        if(i == 1 || cur_inst_adeq < best_inst_adeq) {
+            mtxcpy(&best_memb, &memb);
+            mtxcpy(&best_weights, &weights);
+            best_inst_adeq = cur_inst_adeq;
+            best_inst = i;
+        }
     }
+	printf("\n");
+    printf("Best adequacy %.15lf on instance %d.\n", best_inst_adeq,
+            best_inst);
+    printf("\n");
+    print_memb(&best_memb);
+    print_weights(&best_weights);
 END:
     fclose(stdout);
     for(j = 0; j < dmatrixc; ++j) {
@@ -380,6 +397,8 @@ END:
     }
     free(dmatrix);
     free_st_matrix(&memb);
+    free_st_matrix(&best_memb);
     free_st_matrix(&weights);
+    free_st_matrix(&best_weights);
     return 0;
 }
